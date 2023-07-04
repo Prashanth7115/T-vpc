@@ -1,0 +1,73 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'AWS_CREDENTIALS_ID', description: 'AWS credentials ID stored in Jenkins')
+        string(name: 'AWS_REGION', description: 'AWS region', defaultValue: 'ap-south-1')
+        string(name: 'vpc_cidr', description: 'CIDR block for the new VPC', defaultValue: '10.0.0.0/16')
+        string(name: 'NEW_VPC_NAME', description: 'Name for the new VPC', defaultValue: 'eks-vpc-1')
+    }
+
+    stages {
+        stage('Fetch and List/Create VPCs') {
+            steps {
+                script {
+                    withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
+                        def vpcs = sh(script: 'aws ec2 describe-vpcs --query "Vpcs[*].{VpcId:VpcId, VpcName:Tags[?Key==\'Name\'].Value|[0]}" --output json', returnStdout: true).trim()
+                        def vpcsJson = readJSON(text: vpcs)
+                        def numVpcs = vpcsJson.size()
+
+                        if (numVpcs > 2) {
+                            echo "Number of VPCs (${numVpcs}) is greater than 2. Creating a new VPC using Terraform..."
+                            checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'GITHUB_CREDENTIALS_ID', url: 'https://github.com/Hemadri-BReddy/vpc.git']]])
+
+                            sh 'terraform init'
+                            //sh 'terraform apply -auto-approve -var="vpc_cidr=${params.vpc_cidr}" -var="vpc_name=${params.NEW_VPC_NAME}" -var="azs=${params.AZS}" -var="public_subnet_cidr=${params.PUBLIC_SUBNET_CIDR}" -var="public_subnet_names=${params.PUBLIC_SUBNET_NAMES}" -var="private_subnet_cidr=${params.PRIVATE_SUBNET_CIDR}" -var="private_subnet_names=${params.PRIVATE_SUBNET_NAMES}" -var="public_sg_name=${params.PUBLIC_SG_NAME}" -var="public_sg_description=${params.PUBLIC_SG_DESCRIPTION}" -var="ingress_cidr=${params.INGRESS_CIDR}" -var="aws_access_key=${params.AWS_ACCESS_KEY}" -var="aws_secret_key=${params.AWS_SECRET_KEY}" -var="vpc_cloudwatch_group=${params.VPC_CLOUDWATCH_GROUP}" -var="vpc_flowlog_role=${params.VPC_FLOWLOG_ROLE}" -var="vpc_iam_role_policy=${params.VPC_IAM_ROLE_POLICY}" -var="project=${params.PROJECT}"'
+                            sh 'terraform apply -auto-approve -var="vpc_cidr=${params.vpc_cidr}" -var="vpc_name=${params.NEW_VPC_NAME}" -var="azs=${params.AZS}" -var="public_subnet_cidr=${params.PUBLIC_SUBNET_CIDR}" -var="public_subnet_names=${params.PUBLIC_SUBNET_NAMES}" -var="private_subnet_cidr=${params.PRIVATE_SUBNET_CIDR}" -var="private_subnet_names=${params.PRIVATE_SUBNET_NAMES}" -var="public_sg_name=${params.PUBLIC_SG_NAME}" -var="public_sg_description=${params.PUBLIC_SG_DESCRIPTION}" -var="ingress_cidr=${params.INGRESS_CIDR}" -var="aws_access_key=${params.AWS_ACCESS_KEY}" -var="aws_secret_key=${params.AWS_SECRET_KEY}" -var="vpc_cloudwatch_group=${params.VPC_CLOUDWATCH_GROUP}" -var="vpc_flowlog_role=${params.VPC_FLOWLOG_ROLE}" -var="vpc_iam_role_policy=${params.VPC_IAM_ROLE_POLICY}" -var="project=${params.PROJECT}"'
+
+
+                            echo "New VPC created successfully."
+                        } else {
+                            echo "Number of VPCs (${numVpcs}) is less than or equal to 2. Listing existing VPCs:"
+                            for (def vpc in vpcsJson) {
+                                def vpcId = vpc.VpcId
+                                def vpcName = vpc.VpcName ?: '<No Name>'
+
+                                echo "VPC ID: ${vpcId}, Name: ${vpcName}"
+                            }
+
+                            // Add your code here to select an existing VPC or create a new one
+                            def input = input(
+                                id: 'vpcSelection',
+                                message: 'Select/Create a VPC:',
+                                parameters: [
+                                    choice(name: 'existingVpc', choices: vpcsJson.collect { "${it.VpcId}:${it.VpcName ?: '<No Name>'}" }, description: 'Existing VPCs'),
+                                    booleanParam(name: 'createNewVpc', defaultValue: false, description: 'Create a new VPC')
+                                ]
+                            )
+
+                            def selectedVpcId
+                            def selectedVpcName
+                            if (input.createNewVpc) {
+                                echo "Creating a new VPC using Terraform..."
+                                checkout([$class: 'GitSCM', branches: [[name: '*/master']], doGenerateSubmoduleConfigurations: false, extensions: [], submoduleCfg: [], userRemoteConfigs: [[credentialsId: 'GITHUB_CREDENTIALS_ID', url: 'https://github.com/Hemadri-BReddy/vpc.git']]])
+
+                                sh 'terraform init'
+                                sh 'terraform apply -auto-approve -var="vpc_cidr=${params.vpc_cidr}" -var="vpc_name=${params.NEW_VPC_NAME}" -var="azs=${params.AZS}" -var="public_subnet_cidr=${params.PUBLIC_SUBNET_CIDR}" -var="public_subnet_names=${params.PUBLIC_SUBNET_NAMES}" -var="private_subnet_cidr=${params.PRIVATE_SUBNET_CIDR}" -var="private_subnet_names=${params.PRIVATE_SUBNET_NAMES}" -var="public_sg_name=${params.PUBLIC_SG_NAME}" -var="public_sg_description=${params.PUBLIC_SG_DESCRIPTION}" -var="ingress_cidr=${params.INGRESS_CIDR}" -var="aws_access_key=${params.AWS_ACCESS_KEY}" -var="aws_secret_key=${params.AWS_SECRET_KEY}" -var="vpc_cloudwatch_group=${params.VPC_CLOUDWATCH_GROUP}" -var="vpc_flowlog_role=${params.VPC_FLOWLOG_ROLE}" -var="vpc_iam_role_policy=${params.VPC_IAM_ROLE_POLICY}" -var="project=${params.PROJECT}"'
+
+                                echo "New VPC created successfully."
+                            } else {
+                                def selectedVpc = input.existingVpc.split(':')
+                                selectedVpcId = selectedVpc[0]
+                                selectedVpcName = selectedVpc[1]
+                            }
+
+                            echo "Selected/created VPC ID: ${selectedVpcId}"
+                            echo  "Selected/created VPC Name: ${selectedVpcName}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
